@@ -2,8 +2,6 @@
 
 [![Website](https://img.shields.io/badge/Website-gtree.henil.dev-brightgreen)](https://gtree.henil.dev) [![Demo](https://img.shields.io/badge/Demo-gtree.henil.dev/henilmalaviya/gtree-blue)](https://gtree.henil.dev/henilmalaviya/gtree) [![GitHub](https://img.shields.io/github/stars/henilmalaviya/gtree?style=social)](https://github.com/henilmalaviya/gtree)
 
-## Overview
-
 **gtree** is a service that generates a text-based tree representation of GitHub repositories. It’s designed to help developers and AI models like LLMs quickly understand a project’s structure by providing a concise, organized view of the repo contents.
 
 Live Demo: [gtree.henil.dev](https://gtree.henil.dev)
