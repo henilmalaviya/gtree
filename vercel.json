@@ -1,3 +1,8 @@
 {
-  "routes": [{ "src": "/(.*)", "dest": "/api/handler.go" }]
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api"
+    }
+  ]
 }
