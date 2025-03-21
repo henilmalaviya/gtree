@@ -6,20 +6,24 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
+	"sort"
 	"strings"
 )
 
-type ApiResponse struct {
-	SHA  string `json:"sha"`
+type TreeNode struct {
+	Path string `json:"path"`
+	Mode string `json:"mode"`
+	Type string `json:"type"`
+	Size int    `json:"size"`
+	Sha  string `json:"sha"`
 	Url  string `json:"url"`
-	Tree []struct {
-		Path string `json:"path"`
-		Mode string `json:"mode"`
-		Type string `json:"type"`
-		Size int    `json:"size"`
-		Sha  string `json:"sha"`
-		Url  string `json:"url"`
-	} `json:"tree"`
+}
+
+type ApiResponse struct {
+	SHA  string     `json:"sha"`
+	Url  string     `json:"url"`
+	Tree []TreeNode `json:"tree"`
 }
 
 func fetchTree(owner, repo string) (ApiResponse, error) {
@@ -70,6 +74,66 @@ func fetchTree(owner, repo string) (ApiResponse, error) {
 	return data, nil
 }
 
+func parseTree(tree []TreeNode) string {
+	// Step 1: Build a map of directory paths to their direct children
+	dirMap := make(map[string][]TreeNode)
+	for _, node := range tree {
+		parent := ""
+		if idx := strings.LastIndex(node.Path, "/"); idx != -1 {
+			parent = node.Path[:idx] // Extract parent directory
+		}
+		dirMap[parent] = append(dirMap[parent], node)
+	}
+
+	// Step 2: Generate the tree string starting from the root
+	return buildTree("", "", dirMap)
+}
+
+func buildTree(dir string, prefix string, dirMap map[string][]TreeNode) string {
+	// Get children of the current directory
+	children, ok := dirMap[dir]
+	if !ok {
+		return "" // No children, return empty string
+	}
+
+	// Step 3: Sort children by base name for alphabetical order
+	sort.Slice(children, func(i, j int) bool {
+		return path.Base(children[i].Path) < path.Base(children[j].Path)
+	})
+
+	// Step 4: Build the tree string
+	var result strings.Builder
+	for i, child := range children {
+		isLast := i == len(children)-1
+		connector := "├── "
+		if isLast {
+			connector = "└── "
+		}
+
+		// Get the base name and append "/" for directories
+		name := path.Base(child.Path)
+		if child.Type == "tree" {
+			name += "/"
+		}
+
+		// Write the current node's line
+		result.WriteString(prefix + connector + name + "\n")
+
+		// If it's a directory, recurse into it with updated prefix
+		if child.Type == "tree" {
+			childPrefix := prefix
+			if isLast {
+				childPrefix += "    " // No vertical line if last
+			} else {
+				childPrefix += "│   " // Continue vertical line
+			}
+			result.WriteString(buildTree(child.Path, childPrefix, dirMap))
+		}
+	}
+
+	return result.String()
+}
+
 func Handler(w http.ResponseWriter, r *http.Request) {
 
 	// removing first "/"
@@ -92,10 +156,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// send response
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(fetchedTree)
+		treeOutput := parseTree(fetchedTree.Tree)
+		repoName := owner + "/" + repo
+		fullOutput := repoName + "\n" + treeOutput
 
+		// Send response as plain text
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		fmt.Fprint(w, fullOutput)
 	} else {
 		http.Error(w, "Not Found", http.StatusNotFound)
 	}
