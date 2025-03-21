@@ -1,37 +1,84 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"path"
-	"sort"
+	"strconv"
 	"strings"
+	"time"
+
+	"github.com/go-redis/redis/v8"
 )
 
-// RepoDetails holds the default branch from the GitHub API response
+// Redis client
+var rdb *redis.Client
+
+// TTL for cache entries
+var ttl time.Duration
+
+// Initialize Redis client and TTL from environment variables
+func init() {
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+
+	redisPassword := os.Getenv("REDIS_PASSWORD")
+
+	redisDBStr := os.Getenv("REDIS_DB")
+	redisDB := 0
+	if redisDBStr != "" {
+		var err error
+		redisDB, err = strconv.Atoi(redisDBStr)
+		if err != nil {
+			panic("Invalid REDIS_DB: " + err.Error())
+		}
+	}
+
+	rdb = redis.NewClient(&redis.Options{
+		Addr:     redisAddr,
+		Password: redisPassword,
+		DB:       redisDB,
+	})
+
+	ctx := context.Background()
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		panic("Failed to connect to Redis: " + err.Error())
+	}
+
+	ttlStr := os.Getenv("CACHE_TTL")
+	if ttlStr == "" {
+		ttl = 10 * time.Minute
+	} else {
+		ttlMin, err := strconv.Atoi(ttlStr)
+		if err != nil {
+			panic("Invalid CACHE_TTL: " + err.Error())
+		}
+		ttl = time.Duration(ttlMin) * time.Minute
+	}
+}
+
+// RepoDetails holds the default branch from the GitHub API
 type RepoDetails struct {
 	DefaultBranch string `json:"default_branch"`
 }
 
-type TreeNode struct {
-	Path string `json:"path"`
-	Mode string `json:"mode"`
-	Type string `json:"type"`
-	Size int    `json:"size"`
-	Sha  string `json:"sha"`
-	Url  string `json:"url"`
-}
-
+// ApiResponse holds the tree data from the GitHub API
 type ApiResponse struct {
-	SHA  string     `json:"sha"`
-	Url  string     `json:"url"`
 	Tree []TreeNode `json:"tree"`
 }
 
-// fetchDefaultBranch gets the default branch for a repository
+// TreeNode represents a node in the repository tree
+type TreeNode struct {
+	Path string `json:"path"`
+	Type string `json:"type"`
+}
+
+// fetchDefaultBranch fetches the default branch from GitHub API
 func fetchDefaultBranch(owner, repo string) (string, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s", owner, repo)
 	token := os.Getenv("GITHUB_TOKEN")
@@ -69,7 +116,7 @@ func fetchDefaultBranch(owner, repo string) (string, error) {
 	return repoDetails.DefaultBranch, nil
 }
 
-// fetchTree gets the tree for a specific branch
+// fetchTree fetches the tree for a specific branch from GitHub API
 func fetchTree(owner, repo, branch string) (ApiResponse, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/git/trees/%s?recursive=true", owner, repo, branch)
 	token := os.Getenv("GITHUB_TOKEN")
@@ -107,103 +154,101 @@ func fetchTree(owner, repo, branch string) (ApiResponse, error) {
 	return data, nil
 }
 
-func getChildren(parent string, tree []TreeNode) []TreeNode {
-	var children []TreeNode
-	for _, node := range tree {
-		dir := ""
-		if strings.Contains(node.Path, "/") {
-			dir = node.Path[:strings.LastIndex(node.Path, "/")]
-		}
-		if dir == parent {
-			children = append(children, node)
-		}
-	}
-	return children
-}
-
-func buildTree(dir string, prefix string, tree []TreeNode) string {
-	children := getChildren(dir, tree)
-	if len(children) == 0 {
-		return ""
-	}
-
-	sort.Slice(children, func(i, j int) bool {
-		return path.Base(children[i].Path) < path.Base(children[j].Path)
-	})
-
-	var output strings.Builder
-	for i, child := range children {
-		isLast := i == len(children)-1
-		connector := "├── "
-		if isLast {
-			connector = "└── "
-		}
-
-		name := path.Base(child.Path)
-		if child.Type == "tree" {
-			name += "/"
-		}
-
-		output.WriteString(prefix + connector + name + "\n")
-
-		if child.Type == "tree" {
-			newPrefix := prefix
-			if isLast {
-				newPrefix += "    "
-			} else {
-				newPrefix += "│   "
-			}
-			output.WriteString(buildTree(child.Path, newPrefix, tree))
-		}
-	}
-	return output.String()
-}
-
+// parseTree builds a tree-like string from the API response
 func parseTree(tree []TreeNode) string {
-	return buildTree("", "", tree)
+	var lines []string
+	for _, node := range tree {
+		lines = append(lines, node.Path)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// getDefaultBranch gets the default branch from cache or API
+func getDefaultBranch(ctx context.Context, owner, repo string, noCache bool) (string, error) {
+	key := fmt.Sprintf("default_branch:%s:%s", owner, repo)
+	if !noCache {
+		val, err := rdb.Get(ctx, key).Result()
+		if err == nil {
+			return val, nil
+		} else if err != redis.Nil {
+			return "", fmt.Errorf("redis error: %w", err)
+		}
+	}
+
+	branch, err := fetchDefaultBranch(owner, repo)
+	if err != nil {
+		return "", err
+	}
+
+	if err := rdb.Set(ctx, key, branch, ttl).Err(); err != nil {
+		return "", fmt.Errorf("redis set error: %w", err)
+	}
+	return branch, nil
+}
+
+// getTreeString gets the built tree string from cache or API
+func getTreeString(ctx context.Context, owner, repo, branch string, noCache bool) (string, error) {
+	key := fmt.Sprintf("tree:%s:%s:%s", owner, repo, branch)
+	if !noCache {
+		val, err := rdb.Get(ctx, key).Result()
+		if err == nil {
+			return val, nil
+		} else if err != redis.Nil {
+			return "", fmt.Errorf("redis error: %w", err)
+		}
+	}
+
+	fetchedTree, err := fetchTree(owner, repo, branch)
+	if err != nil {
+		return "", err
+	}
+
+	treeOutput := parseTree(fetchedTree.Tree)
+	if err := rdb.Set(ctx, key, treeOutput, ttl).Err(); err != nil {
+		return "", fmt.Errorf("redis set error: %w", err)
+	}
+	return treeOutput, nil
 }
 
 // Handler processes the HTTP request
 func Handler(w http.ResponseWriter, r *http.Request) {
-	// Remove leading "/" from the path
+	ctx := r.Context()
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	parts := strings.Split(path, "/")
 
-	// Validate the path: must be owner/repo or owner/repo/branch
 	if len(parts) < 2 || len(parts) > 3 || parts[0] == "" || parts[1] == "" {
 		http.Error(w, "Invalid path. Use /owner/repo or /owner/repo/branch", http.StatusBadRequest)
 		return
 	}
 
+	// Check for nocache query parameter
+	noCache := strings.ToLower(r.URL.Query().Get("nocache")) == "true"
+
 	owner := parts[0]
 	repo := parts[1]
-	branch := ""
+	var branch string
+	var err error
 
-	// If branch isn’t provided, fetch the default
-	if len(parts) == 3 {
-		branch = parts[2]
+	if len(parts) == 2 {
+		branch, err = getDefaultBranch(ctx, owner, repo, noCache)
 	} else {
-		var err error
-		branch, err = fetchDefaultBranch(owner, repo)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to fetch default branch: %v", err), http.StatusInternalServerError)
-			return
-		}
+		branch = parts[2]
 	}
 
-	// Fetch the tree using the determined branch
-	fetchedTree, err := fetchTree(owner, repo, branch)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to fetch tree: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to get default branch: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Assuming parseTree exists and generates the tree output from fetchedTree.Tree
-	treeOutput := parseTree(fetchedTree.Tree)
+	treeOutput, err := getTreeString(ctx, owner, repo, branch, noCache)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get tree: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	repoName := fmt.Sprintf("%s/%s (%s)", owner, repo, branch)
 	fullOutput := repoName + "\n" + treeOutput
 
-	// Send the response as plain text
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	fmt.Fprint(w, fullOutput)
 }
