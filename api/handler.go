@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -154,13 +156,63 @@ func fetchTree(owner, repo, branch string) (ApiResponse, error) {
 	return data, nil
 }
 
-// parseTree builds a tree-like string from the API response
-func parseTree(tree []TreeNode) string {
-	var lines []string
+// getChildren retrieves child nodes for a given parent directory
+func getChildren(parent string, tree []TreeNode) []TreeNode {
+	var children []TreeNode
 	for _, node := range tree {
-		lines = append(lines, node.Path)
+		dir := ""
+		if strings.Contains(node.Path, "/") {
+			dir = node.Path[:strings.LastIndex(node.Path, "/")]
+		}
+		if dir == parent {
+			children = append(children, node)
+		}
 	}
-	return strings.Join(lines, "\n")
+	return children
+}
+
+// buildTree recursively builds the tree string
+func buildTree(dir string, prefix string, tree []TreeNode) string {
+	children := getChildren(dir, tree)
+	if len(children) == 0 {
+		return ""
+	}
+
+	sort.Slice(children, func(i, j int) bool {
+		return path.Base(children[i].Path) < path.Base(children[j].Path)
+	})
+
+	var output strings.Builder
+	for i, child := range children {
+		isLast := i == len(children)-1
+		connector := "├── "
+		if isLast {
+			connector = "└── "
+		}
+
+		name := path.Base(child.Path)
+		if child.Type == "tree" {
+			name += "/"
+		}
+
+		output.WriteString(prefix + connector + name + "\n")
+
+		if child.Type == "tree" {
+			newPrefix := prefix
+			if isLast {
+				newPrefix += "    "
+			} else {
+				newPrefix += "│   "
+			}
+			output.WriteString(buildTree(child.Path, newPrefix, tree))
+		}
+	}
+	return output.String()
+}
+
+// parseTree initiates the tree-building process
+func parseTree(tree []TreeNode) string {
+	return buildTree("", "", tree)
 }
 
 // getDefaultBranch gets the default branch from cache or API
@@ -221,7 +273,6 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check for nocache query parameter
 	noCache := strings.ToLower(r.URL.Query().Get("nocache")) == "true"
 
 	owner := parts[0]
