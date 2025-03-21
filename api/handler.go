@@ -45,6 +45,7 @@ func fetchTree(owner, repo string) (ApiResponse, error) {
 	resp, err := client.Do(req)
 
 	if err != nil {
+		fmt.Println(err)
 		return ApiResponse{}, fmt.Errorf("error making request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -86,6 +87,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 		fetchedTree, err := fetchTree(owner, repo)
 		if err != nil {
+
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
