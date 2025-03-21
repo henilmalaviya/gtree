@@ -74,35 +74,31 @@ func fetchTree(owner, repo string) (ApiResponse, error) {
 	return data, nil
 }
 
-func parseTree(tree []TreeNode) string {
-	// Step 1: Build a map of directory paths to their direct children
-	dirMap := make(map[string][]TreeNode)
+func getChildren(parent string, tree []TreeNode) []TreeNode {
+	var children []TreeNode
 	for _, node := range tree {
-		parent := ""
-		if idx := strings.LastIndex(node.Path, "/"); idx != -1 {
-			parent = node.Path[:idx] // Extract parent directory
+		dir := ""
+		if strings.Contains(node.Path, "/") {
+			dir = node.Path[:strings.LastIndex(node.Path, "/")]
 		}
-		dirMap[parent] = append(dirMap[parent], node)
+		if dir == parent {
+			children = append(children, node)
+		}
 	}
-
-	// Step 2: Generate the tree string starting from the root
-	return buildTree("", "", dirMap)
+	return children
 }
 
-func buildTree(dir string, prefix string, dirMap map[string][]TreeNode) string {
-	// Get children of the current directory
-	children, ok := dirMap[dir]
-	if !ok {
-		return "" // No children, return empty string
+func buildTree(dir string, prefix string, tree []TreeNode) string {
+	children := getChildren(dir, tree)
+	if len(children) == 0 {
+		return ""
 	}
 
-	// Step 3: Sort children by base name for alphabetical order
 	sort.Slice(children, func(i, j int) bool {
 		return path.Base(children[i].Path) < path.Base(children[j].Path)
 	})
 
-	// Step 4: Build the tree string
-	var result strings.Builder
+	var output strings.Builder
 	for i, child := range children {
 		isLast := i == len(children)-1
 		connector := "├── "
@@ -110,34 +106,34 @@ func buildTree(dir string, prefix string, dirMap map[string][]TreeNode) string {
 			connector = "└── "
 		}
 
-		// Get the base name and append "/" for directories
 		name := path.Base(child.Path)
 		if child.Type == "tree" {
 			name += "/"
 		}
 
-		// Write the current node's line
-		result.WriteString(prefix + connector + name + "\n")
+		output.WriteString(prefix + connector + name + "\n")
 
-		// If it's a directory, recurse into it with updated prefix
 		if child.Type == "tree" {
-			childPrefix := prefix
+			newPrefix := prefix
 			if isLast {
-				childPrefix += "    " // No vertical line if last
+				newPrefix += "    "
 			} else {
-				childPrefix += "│   " // Continue vertical line
+				newPrefix += "│   "
 			}
-			result.WriteString(buildTree(child.Path, childPrefix, dirMap))
+			output.WriteString(buildTree(child.Path, newPrefix, tree))
 		}
 	}
+	return output.String()
+}
 
-	return result.String()
+func parseTree(tree []TreeNode) string {
+	return buildTree("", "", tree)
 }
 
 func Handler(w http.ResponseWriter, r *http.Request) {
 
 	// removing first "/"
-	path := strings.TrimPrefix(r.URL.Path, "/")
+	path := strings.Trim(r.URL.Path, "/")
 
 	// split by "/"
 	parts := strings.Split(path, "/")
@@ -151,7 +147,6 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 		fetchedTree, err := fetchTree(owner, repo)
 		if err != nil {
-
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
