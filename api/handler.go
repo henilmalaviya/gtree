@@ -11,6 +11,11 @@ import (
 	"strings"
 )
 
+// RepoDetails holds the default branch from the GitHub API response
+type RepoDetails struct {
+	DefaultBranch string `json:"default_branch"`
+}
+
 type TreeNode struct {
 	Path string `json:"path"`
 	Mode string `json:"mode"`
@@ -26,46 +31,74 @@ type ApiResponse struct {
 	Tree []TreeNode `json:"tree"`
 }
 
-func fetchTree(owner, repo string) (ApiResponse, error) {
-	URL := fmt.Sprintf("https://api.github.com/repos/%s/%s/git/trees/main?recursive=true", owner, repo)
+// fetchDefaultBranch gets the default branch for a repository
+func fetchDefaultBranch(owner, repo string) (string, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s", owner, repo)
+	token := os.Getenv("GITHUB_TOKEN")
+	if token == "" {
+		return "", fmt.Errorf("GITHUB_TOKEN not set")
+	}
 
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("error creating request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("error making request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("request failed with status: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("error reading response: %w", err)
+	}
+
+	var repoDetails RepoDetails
+	if err := json.Unmarshal(body, &repoDetails); err != nil {
+		return "", fmt.Errorf("error parsing JSON: %w", err)
+	}
+
+	return repoDetails.DefaultBranch, nil
+}
+
+// fetchTree gets the tree for a specific branch
+func fetchTree(owner, repo, branch string) (ApiResponse, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/git/trees/%s?recursive=true", owner, repo, branch)
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
 		return ApiResponse{}, fmt.Errorf("GITHUB_TOKEN not set")
 	}
 
-	// prepare
-	req, err := http.NewRequest("GET", URL, nil)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return ApiResponse{}, fmt.Errorf("error creating request: %w", err)
 	}
-
-	// set token
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	client := &http.Client{}
-
-	// make request
 	resp, err := client.Do(req)
-
 	if err != nil {
-		fmt.Println(err)
 		return ApiResponse{}, fmt.Errorf("error making request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// handle status code
 	if resp.StatusCode != http.StatusOK {
 		return ApiResponse{}, fmt.Errorf("request failed with status: %d", resp.StatusCode)
 	}
 
-	// read body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return ApiResponse{}, fmt.Errorf("error reading response: %w", err)
 	}
 
-	// parse json
 	var data ApiResponse
 	if err := json.Unmarshal(body, &data); err != nil {
 		return ApiResponse{}, fmt.Errorf("error parsing JSON: %w", err)
@@ -130,35 +163,47 @@ func parseTree(tree []TreeNode) string {
 	return buildTree("", "", tree)
 }
 
+// Handler processes the HTTP request
 func Handler(w http.ResponseWriter, r *http.Request) {
-
-	// removing first "/"
-	path := strings.Trim(r.URL.Path, "/")
-
-	// split by "/"
+	// Remove leading "/" from the path
+	path := strings.TrimPrefix(r.URL.Path, "/")
 	parts := strings.Split(path, "/")
 
-	// pattern check (owner/repo)
-	if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+	// Validate the path: must be owner/repo or owner/repo/branch
+	if len(parts) < 2 || len(parts) > 3 || parts[0] == "" || parts[1] == "" {
+		http.Error(w, "Invalid path. Use /owner/repo or /owner/repo/branch", http.StatusBadRequest)
+		return
+	}
 
-		// extract
-		owner := parts[0]
-		repo := parts[1]
+	owner := parts[0]
+	repo := parts[1]
+	branch := ""
 
-		fetchedTree, err := fetchTree(owner, repo)
+	// If branch isn’t provided, fetch the default
+	if len(parts) == 3 {
+		branch = parts[2]
+	} else {
+		var err error
+		branch, err = fetchDefaultBranch(owner, repo)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("Failed to fetch default branch: %v", err), http.StatusInternalServerError)
 			return
 		}
-
-		treeOutput := parseTree(fetchedTree.Tree)
-		repoName := owner + "/" + repo
-		fullOutput := repoName + "\n" + treeOutput
-
-		// Send response as plain text
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		fmt.Fprint(w, fullOutput)
-	} else {
-		http.Error(w, "Not Found", http.StatusNotFound)
 	}
+
+	// Fetch the tree using the determined branch
+	fetchedTree, err := fetchTree(owner, repo, branch)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to fetch tree: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Assuming parseTree exists and generates the tree output from fetchedTree.Tree
+	treeOutput := parseTree(fetchedTree.Tree)
+	repoName := fmt.Sprintf("%s/%s (%s)", owner, repo, branch)
+	fullOutput := repoName + "\n" + treeOutput
+
+	// Send the response as plain text
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	fmt.Fprint(w, fullOutput)
 }
