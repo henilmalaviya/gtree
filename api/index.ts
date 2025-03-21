@@ -61,6 +61,9 @@ app.get("/:owner/:repo/:branch?", async (c) => {
 
   const treeString = buildTree(tree, owner, repo, branch!);
 
+  // Set cache headers for Vercel Edge
+  c.header("Cache-Control", "s-maxage=600, stale-while-revalidate=60");
+
   return c.text(treeString);
 });
 
