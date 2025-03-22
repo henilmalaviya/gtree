@@ -31,8 +31,8 @@ Parameters:
 - branch: Branch name (optional, defaults to the repository's default branch)
 
 Examples:
-- /henilmalaviya/gtree         # Shows the default branch tree for nexusog/link-api
-- /henilmalaviya/gtree/main    # Shows the 'main' branch tree for nexusog/link-api
+- /henilmalaviya/gtree         # Shows the default branch tree for henilmalaviya/gtree
+- /henilmalaviya/gtree/main    # Shows the 'main' branch tree for henilmalaviya/gtree
 
 Potential Use Cases:
 - Enhancing LLM understanding of repository structure by providing a clear tree view
