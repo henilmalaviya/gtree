@@ -1,9 +1,12 @@
 import { Hono } from "hono";
-import { handle } from "hono/vercel";
+import { getConnInfo, handle } from "hono/vercel";
 import { fetchDefaultBranch } from "../utils/fetchDefaultBranch";
 import { trimTrailingSlash } from "hono/trailing-slash";
 import { fetchRepoTree } from "../utils/fetchRepoTree";
 import { buildTree } from "../utils/buildTree";
+import { rateLimiter } from "hono-rate-limiter";
+import { RedisStore } from "@hono-rate-limiter/redis";
+import { kv } from "@vercel/kv";
 
 export const config = {
   runtime: "edge",
@@ -49,6 +52,20 @@ Note: This service only works with public repositories due to GitHub API restric
 
   return c.text(explanation);
 });
+
+app.use(
+  rateLimiter({
+    // 60 seconds
+    windowMs: 1000 * 60,
+    limit: 100,
+    message: "Too many requests, we are detecting abuse.",
+    keyGenerator(c) {
+      const info = getConnInfo(c);
+      return info.remote.address || "unknown";
+    },
+    store: new RedisStore({ client: kv }),
+  })
+);
 
 app.get("/:owner/:repo/:branch?", async (c) => {
   let { owner, repo, branch } = c.req.param();
