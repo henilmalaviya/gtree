@@ -6,7 +6,9 @@
     "dev": "bun run --watch src/index.ts"
   },
   "dependencies": {
-    "elysia": "latest"
+    "@octokit/core": "^7.0.3",
+    "elysia": "latest",
+    "@tqman/nice-logger": "^1.1.1"
   },
   "devDependencies": {
     "bun-types": "latest"
