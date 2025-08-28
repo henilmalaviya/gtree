@@ -1,4 +1,5 @@
 import { Elysia } from "elysia";
+import { logger } from "@tqman/nice-logger";
 import { fetchDefaultBranch } from "../utils/fetchDefaultBranch";
 import { fetchRepoTree } from "../utils/fetchRepoTree";
 import { buildTree } from "../utils/buildTree";
@@ -54,6 +55,13 @@ function setCache(key: string, value: string) {
 }
 
 const app = new Elysia()
+  // Nice logger plugin (before other hooks so everything downstream is logged)
+  .use(
+    logger({
+      mode: (Bun.env.LOG_MODE as any) || "combined", // or "live"
+      withTimestamp: true,
+    })
+  )
   // Rate limit hook (runs early)
   .onRequest(({ request, set }) => {
     const ipHeader =
