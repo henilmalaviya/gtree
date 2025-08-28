@@ -1,43 +1,15 @@
-# gtree
+# Elysia with Bun runtime
 
-[![Website](https://img.shields.io/badge/Website-gtree.henil.dev-brightgreen)](https://gtree.henil.dev) [![Demo](https://img.shields.io/badge/Demo-gtree.henil.dev/henilmalaviya/gtree-blue)](https://gtree.henil.dev/henilmalaviya/gtree) [![GitHub](https://img.shields.io/github/stars/henilmalaviya/gtree?style=social)](https://github.com/henilmalaviya/gtree)
-
-**gtree** is a service that generates a text-based tree representation of GitHub repositories. It’s designed to help developers and AI models like LLMs quickly understand a project’s structure by providing a concise, organized view of the repo contents.
-
-Live Demo: [gtree.henil.dev](https://gtree.henil.dev)
-
-### Features
-
-- Text-based tree representation of repositories
-- Shareable URL
-- Mimics the Linux `tree` command
-- Great for feeding into LLMs to help understand project structure
-
-## Self-Hosting
-
-If you want to run gtree locally:
-
+## Getting Started
+To get started with this template, simply paste this command into your terminal:
 ```bash
-# Clone the repo
-git clone https://github.com/henilmalaviya/gtree.git
-
-# Install dependencies
-bun install
-
-# Run locally
-bun run start
+bun create elysia ./elysia-example
 ```
 
-### Environment Variables
-
-To avoid hitting GitHub’s rate limits, you can provide a GitHub token:
-
-```
-GITHUB_TOKEN=your_personal_token_here
+## Development
+To start the development server run:
+```bash
+bun run dev
 ```
 
-This allows gtree to make authenticated requests to the GitHub API, increasing the rate limit.
-
-## Contributing
-
-Got ideas for improvements? Feel free to open an issue or a pull request!
+Open http://localhost:3000/ with your browser to see the result.
