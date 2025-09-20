@@ -1,0 +1,9 @@
+[phases.setup]
+nixPkgs = ["bun"]
+
+[phases.install]
+dependsOn = ["setup"]
+cmds = ["bun install --no-save"]
+
+[start]
+cmd = "bun run start"
